@@ -4,6 +4,7 @@ const cors = require('cors');
 const fs = require('fs');
 const csv = require('csv-parser');
 const sentiment = require('wink-sentiment');
+const mysql = require('mysql2');
 
 const app = express();
 const port = process.env.API_PORT || 8080;
@@ -11,23 +12,19 @@ const port = process.env.API_PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-const mysql = require('mysql2');
-
-const db = mysql.createConnection({
+// Kết nối DB bằng Pool để tự quản lý kết nối
+const db = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error('❌ Lỗi kết nối:', err.message);
-  } else {
-    console.log('✅ Đã kết nối đến database:', process.env.DB_NAME);
-  }
-});
+const dbPromise = db.promise();
 
 // API: Lấy danh sách bảng
 app.get('/tables', (req, res) => {
@@ -60,12 +57,12 @@ app.get('/data/:table/:id', async (req, res) => {
     let results;
 
     if (recordId === -1) {
-      const [randomRows] = await db.promise().query(
+      const [randomRows] = await dbPromise.query(
         `SELECT * FROM \`${tableName}\` ORDER BY RAND() LIMIT 1`
       );
       results = randomRows;
     } else {
-      const [rows] = await db.promise().query(
+      const [rows] = await dbPromise.query(
         `SELECT * FROM \`${tableName}\` WHERE id = ? LIMIT 1`,
         [recordId]
       );
@@ -122,7 +119,7 @@ app.post('/analyze', async (req, res) => {
 // Hàm phân tích chung gom 2 hàm cũ
 async function analyzeEmailUnified({ tableName, recordId, email, content }, whitelist, blacklist) {
   if (tableName && recordId != null) {
-    const [recordRows] = await db.promise().query(
+    const [recordRows] = await dbPromise.query(
       `SELECT * FROM \`${tableName}\` WHERE id = ? LIMIT 1`,
       [recordId]
     );
@@ -175,7 +172,7 @@ function checkSpamWithKeywords(content) {
 // Check spam trong DB bằng từ khóa (không kiểm tra trùng nội dung nữa)
 async function checkIsSpamContent(tableName, recordId) {
   try {
-    const [recordRows] = await db.promise().query(
+    const [recordRows] = await dbPromise.query(
       `SELECT * FROM \`${tableName}\` WHERE id = ? LIMIT 1`,
       [recordId]
     );
